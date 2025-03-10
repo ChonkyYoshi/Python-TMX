@@ -1,10 +1,21 @@
+import json
 import xml.etree.ElementTree as pyet
 from collections import Counter
 from collections.abc import Iterable, Sequence
-from dataclasses import MISSING, fields
+from dataclasses import MISSING, asdict, fields
 from datetime import datetime
+from enum import Enum
 from itertools import chain
-from typing import Any, Literal, get_args, get_origin, get_type_hints, overload
+from os import PathLike
+from pathlib import Path
+from typing import (
+  Any,
+  Literal,
+  get_args,
+  get_origin,
+  get_type_hints,
+  overload,
+)
 
 import lxml.etree as lxet
 
@@ -33,7 +44,7 @@ from PythonTmx.classes import (
 )
 from PythonTmx.errors import ValidationError
 
-__all__ = ["to_element", "from_element"]
+__all__ = ["to_element", "from_element", "to_file", "from_file", "to_json_file"]
 
 
 def _make_attrib_dict(map_: TmxElement, keep_extra: bool) -> dict[str, str]:
@@ -56,8 +67,7 @@ def _make_attrib_dict(map_: TmxElement, keep_extra: bool) -> dict[str, str]:
 def _fill_inline_content(
   content: Iterable,
   element: lxet._Element | pyet.Element,
-  /,
-  lxml: Literal[True] | Literal[False],
+  lxml: bool,
   keep_extra: bool,
   validate_element: bool,
 ) -> None:
@@ -85,7 +95,7 @@ def _fill_inline_content(
 
 
 def _parse_inline_content(
-  element: lxet._Element | pyet.Element, /, keep_extra: bool
+  element: lxet._Element | pyet.Element, keep_extra: bool
 ) -> list:
   content: list = []
   if element.text is not None:
@@ -113,7 +123,7 @@ def _parse_inline_content(
   return content
 
 
-def _parse_bpt(element: lxet._Element | pyet.Element, /, keep_extra: bool) -> Bpt:
+def _parse_bpt(element: lxet._Element | pyet.Element, keep_extra: bool) -> Bpt:
   bpt = Bpt(
     content=_parse_inline_content(element, keep_extra=keep_extra),
     i=int(element.attrib.pop("i")),
@@ -126,7 +136,7 @@ def _parse_bpt(element: lxet._Element | pyet.Element, /, keep_extra: bool) -> Bp
   return bpt
 
 
-def _parse_ept(element: lxet._Element | pyet.Element, /, keep_extra: bool) -> Ept:
+def _parse_ept(element: lxet._Element | pyet.Element, keep_extra: bool) -> Ept:
   return Ept(
     content=_parse_inline_content(element, keep_extra=keep_extra),
     i=int(element.attrib.pop("i")),
@@ -134,7 +144,7 @@ def _parse_ept(element: lxet._Element | pyet.Element, /, keep_extra: bool) -> Ep
   )
 
 
-def _parse_it(element: lxet._Element | pyet.Element, /, keep_extra: bool) -> It:
+def _parse_it(element: lxet._Element | pyet.Element, keep_extra: bool) -> It:
   it = It(
     content=_parse_inline_content(element, keep_extra=keep_extra),
     pos=POS(element.attrib.pop("pos")),
@@ -147,7 +157,7 @@ def _parse_it(element: lxet._Element | pyet.Element, /, keep_extra: bool) -> It:
   return it
 
 
-def _parse_ph(element: lxet._Element | pyet.Element, /, keep_extra: bool) -> Ph:
+def _parse_ph(element: lxet._Element | pyet.Element, keep_extra: bool) -> Ph:
   ph = Ph(
     content=_parse_inline_content(element, keep_extra=keep_extra),
     type=element.attrib.pop("type", None),
@@ -161,7 +171,7 @@ def _parse_ph(element: lxet._Element | pyet.Element, /, keep_extra: bool) -> Ph:
   return ph
 
 
-def _parse_hi(element: lxet._Element | pyet.Element, /, keep_extra: bool) -> Hi:
+def _parse_hi(element: lxet._Element | pyet.Element, keep_extra: bool) -> Hi:
   hi = Hi(
     content=_parse_inline_content(element, keep_extra=keep_extra),
     type=element.attrib.pop("type", None),
@@ -173,7 +183,7 @@ def _parse_hi(element: lxet._Element | pyet.Element, /, keep_extra: bool) -> Hi:
   return hi
 
 
-def _parse_ut(element: lxet._Element | pyet.Element, /, keep_extra: bool) -> Ut:
+def _parse_ut(element: lxet._Element | pyet.Element, keep_extra: bool) -> Ut:
   ut = Ut(
     content=_parse_inline_content(element, keep_extra=keep_extra),
   )
@@ -184,7 +194,7 @@ def _parse_ut(element: lxet._Element | pyet.Element, /, keep_extra: bool) -> Ut:
   return ut
 
 
-def _parse_sub(element: lxet._Element | pyet.Element, /, keep_extra: bool) -> Sub:
+def _parse_sub(element: lxet._Element | pyet.Element, keep_extra: bool) -> Sub:
   return Sub(
     content=_parse_inline_content(element, keep_extra=keep_extra),
     datatype=element.attrib.pop("datatype", None),
@@ -193,9 +203,7 @@ def _parse_sub(element: lxet._Element | pyet.Element, /, keep_extra: bool) -> Su
   )
 
 
-def _parse_map(
-  element: lxet._Element | pyet.Element, /, keep_extra: bool = False
-) -> Map:
+def _parse_map(element: lxet._Element | pyet.Element, keep_extra: bool = False) -> Map:
   return Map(
     unicode=element.attrib.pop("unicode"),
     code=element.attrib.pop("code", None),
@@ -205,9 +213,7 @@ def _parse_map(
   )
 
 
-def _parse_ude(
-  element: lxet._Element | pyet.Element, /, keep_extra: bool = False
-) -> Ude:
+def _parse_ude(element: lxet._Element | pyet.Element, keep_extra: bool = False) -> Ude:
   ude = Ude(
     name=element.attrib.pop("name"),
     base=element.attrib.get("base", None),
@@ -218,7 +224,7 @@ def _parse_ude(
 
 
 def _parse_note(
-  element: lxet._Element | pyet.Element, /, keep_extra: bool = False
+  element: lxet._Element | pyet.Element, keep_extra: bool = False
 ) -> Note:
   return Note(
     text=element.text,  # type: ignore
@@ -229,7 +235,7 @@ def _parse_note(
 
 
 def _parse_prop(
-  element: lxet._Element | pyet.Element, /, keep_extra: bool = False
+  element: lxet._Element | pyet.Element, keep_extra: bool = False
 ) -> Prop:
   return Prop(
     text=element.text,  # type: ignore
@@ -241,7 +247,7 @@ def _parse_prop(
 
 
 def _parse_header(
-  element: lxet._Element | pyet.Element, /, keep_extra: bool = False
+  element: lxet._Element | pyet.Element, keep_extra: bool = False
 ) -> Header:
   header = Header(
     creationtool=element.attrib.pop("creationtool"),
@@ -267,9 +273,7 @@ def _parse_header(
   return header
 
 
-def _parse_tuv(
-  element: lxet._Element | pyet.Element, /, keep_extra: bool = False
-) -> Tuv:
+def _parse_tuv(element: lxet._Element | pyet.Element, keep_extra: bool = False) -> Tuv:
   tuv = Tuv(
     lang=element.attrib.pop(r"{http://www.w3.org/XML/1998/namespace}lang"),
     encoding=element.attrib.pop("o-encoding", None),
@@ -301,7 +305,7 @@ def _parse_tuv(
   return tuv
 
 
-def _parse_tu(element: lxet._Element | pyet.Element, /, keep_extra: bool = False) -> Tu:
+def _parse_tu(element: lxet._Element | pyet.Element, keep_extra: bool = False) -> Tu:
   tu = Tu(
     tuid=element.attrib.pop("tuid", None),
     encoding=element.attrib.pop("o-encoding", None),
@@ -335,9 +339,7 @@ def _parse_tu(element: lxet._Element | pyet.Element, /, keep_extra: bool = False
   return tu
 
 
-def _parse_tmx(
-  element: lxet._Element | pyet.Element, /, keep_extra: bool = False
-) -> Tmx:
+def _parse_tmx(element: lxet._Element | pyet.Element, keep_extra: bool = False) -> Tmx:
   if (header_elem := element.find("header")) is None:
     raise ValueError("Missing header element")
   if (body_elem := element.find("body")) is None:
@@ -363,9 +365,16 @@ def _tmx_to_element(
   keep_extra: bool,
   validate_element: bool,
 ) -> pyet.Element: ...
+@overload
 def _tmx_to_element(
   tmx: Tmx,
-  lxml: Literal[True] | Literal[False],
+  lxml: bool,
+  keep_extra: bool,
+  validate_element: bool,
+) -> lxet._Element | pyet.Element: ...
+def _tmx_to_element(
+  tmx: Tmx,
+  lxml: bool,
   keep_extra: bool,
   validate_element: bool,
 ) -> lxet._Element | pyet.Element:
@@ -394,7 +403,6 @@ def _tmx_to_element(
 def _inline_element_to_element(
   element: InlineElement,
   lxml: Literal[True],
-  /,
   keep_extra: bool,
   validate_element: bool,
 ) -> lxet._Element: ...
@@ -402,14 +410,19 @@ def _inline_element_to_element(
 def _inline_element_to_element(
   element: InlineElement,
   lxml: Literal[False],
-  /,
   keep_extra: bool,
   validate_element: bool,
 ) -> pyet.Element: ...
+@overload
 def _inline_element_to_element(
   element: InlineElement,
-  lxml: Literal[True] | Literal[False],
-  /,
+  lxml: bool,
+  keep_extra: bool,
+  validate_element: bool,
+) -> lxet._Element | pyet.Element: ...
+def _inline_element_to_element(
+  element: InlineElement,
+  lxml: bool,
   keep_extra: bool,
   validate_element: bool,
 ) -> lxet._Element | pyet.Element:
@@ -432,7 +445,6 @@ def _inline_element_to_element(
 def _structural_element_to_element(
   element: StructuralElement,
   lxml: Literal[True],
-  /,
   keep_extra: bool,
   validate_element: bool,
 ) -> lxet._Element: ...
@@ -440,14 +452,19 @@ def _structural_element_to_element(
 def _structural_element_to_element(
   element: StructuralElement,
   lxml: Literal[False],
-  /,
   keep_extra: bool,
   validate_element: bool,
 ) -> pyet.Element: ...
+@overload
 def _structural_element_to_element(
   element: StructuralElement,
-  lxml: Literal[True] | Literal[False],
-  /,
+  lxml: bool,
+  keep_extra: bool,
+  validate_element: bool,
+) -> lxet._Element | pyet.Element: ...
+def _structural_element_to_element(
+  element: StructuralElement,
+  lxml: bool,
   keep_extra: bool,
   validate_element: bool,
 ) -> lxet._Element | pyet.Element:
@@ -480,7 +497,6 @@ def _structural_element_to_element(
 def to_element(
   element: TmxElement,
   lxml: Literal[True],
-  /,
   keep_extra: bool = False,
   validate_element: bool = True,
 ) -> lxet._Element: ...
@@ -488,14 +504,19 @@ def to_element(
 def to_element(
   element: TmxElement,
   lxml: Literal[False],
-  /,
   keep_extra: bool = False,
   validate_element: bool = True,
 ) -> pyet.Element: ...
+@overload
 def to_element(
   element: TmxElement,
-  lxml: Literal[True] | Literal[False],
-  /,
+  lxml: bool,
+  keep_extra: bool = False,
+  validate_element: bool = True,
+) -> lxet._Element | pyet.Element: ...
+def to_element(
+  element: TmxElement,
+  lxml: bool,
   keep_extra: bool = False,
   validate_element: bool = True,
 ) -> lxet._Element | pyet.Element:
@@ -517,7 +538,7 @@ def to_element(
   ----------
   element : TmxElement
       The TmxElement to convert
-  lxml : Literal[True] | Literal[False]
+  lxml : bool
       Whether to use lxml or ElementTree, by default True
   keep_extra : bool, optional
       Whether to include extra attributes present in the element (and its children),
@@ -570,7 +591,7 @@ def to_element(
 
 
 def from_element(
-  element: lxet._Element | pyet.Element, /, keep_extra: bool = False
+  element: lxet._Element | pyet.Element, keep_extra: bool = False
 ) -> TmxElement:
   """
   Converts an lxml or ElementTree element to a TmxElement object.
@@ -697,7 +718,7 @@ def _validate_sequence(value: Sequence[Any], expected_type: type[Any]) -> None:
       )
 
 
-def validate(obj: TmxElement, /, validate_extra: bool = True) -> None:
+def validate(obj: TmxElement, validate_extra: bool = True) -> None:
   """
   Validates a TmxElement object and its children recursively to ensure proper
   typing.
@@ -761,3 +782,90 @@ def validate(obj: TmxElement, /, validate_extra: bool = True) -> None:
     if isinstance(current, Tuv):
       _validate_balanced_paired_tags(current.content)
       stack.extend([item for item in current.content if isinstance(item, TmxElement)])
+
+
+def to_file(
+  tmx_obj: Tmx,
+  file: str | PathLike,
+  lxml: bool = True,
+  keep_extra: bool = False,
+  validate_elements: bool = True,
+) -> None:
+  if not isinstance(file, Path):
+    file = Path(file)
+  if not file.is_file():
+    raise IsADirectoryError(f"{file!r} is not a file")
+  if not file.exists():
+    file.touch()
+  elem = to_element(
+    element=tmx_obj,
+    lxml=lxml,
+    keep_extra=keep_extra,
+    validate_element=validate_elements,
+  )
+  T = lxet.ElementTree if lxml else pyet.ElementTree
+  tree = T(elem)  # type: ignore
+  with open(file, "wb") as f:
+    tree.write(
+      f,
+      encoding=tmx_obj.header.encoding if tmx_obj.header.encoding else "utf-8",
+      xml_declaration=True,
+    )
+
+
+def from_file(
+  file: str | PathLike,
+  lxml: bool = True,
+  keep_extra: bool = False,
+) -> Tmx:
+  if not isinstance(file, Path):
+    file = Path(file)
+  if not file.is_file():
+    raise IsADirectoryError(f"{file!r} is not a file")
+  if not file.exists():
+    raise FileNotFoundError(f"{file!r} does not exist")
+  p = lxet.parse if lxml else pyet.parse
+  root = p(file).getroot()
+  if not root.tag == "tmx":
+    raise ValueError(f"Expected root element to be tmx but got {root.tag!r}")
+  elem = from_element(root, keep_extra=keep_extra)
+  assert isinstance(elem, Tmx)
+  return elem
+
+
+def _serialize(x: datetime | Enum):
+  if isinstance(x, datetime):
+    return x.strftime(r"%Y%m%dT%H%M%SZ")
+  elif isinstance(x, Enum):
+    return x.value
+  else:
+    raise TypeError(f"Unexpected type {type(x).__name__!r}")
+
+
+def to_json_file(
+  tmx_element: TmxElement,
+  file: str | PathLike,
+  encoding: str = "utf-8",
+  validate_element: bool = True,
+  exclude_none: bool = True,
+) -> None:
+  if not isinstance(file, Path):
+    file = Path(file)
+  if not file.is_file():
+    raise IsADirectoryError(f"{file!r} is not a file")
+  if not file.exists():
+    raise FileNotFoundError(f"{file!r} does not exist")
+  if validate_element:
+    validate(tmx_element)
+  with open(file, "w", encoding=encoding) as f:
+    json.dump(
+      obj=asdict(
+        tmx_element,
+        dict_factory=lambda x: {k: v for (k, v) in x if v is not None},
+      )
+      if exclude_none
+      else asdict(tmx_element),
+      fp=f,
+      default=_serialize,
+      ensure_ascii=False,
+    )
